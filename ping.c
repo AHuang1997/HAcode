@@ -8,6 +8,9 @@ struct proto	proto_v6 = { proc_v6, send_v6, NULL, NULL, 0, IPPROTO_ICMPV6 };
 
 int	datalen = 56;		/* data that goes with ICMP echo request */
 
+void handle_sigint();
+int alive;
+
 int
 main(int argc, char **argv)
 {
@@ -226,6 +229,8 @@ readloop(void)
     ssize_t			n;
     struct timeval	tval;
 
+    signal(SIGINT, handle_sigint);
+
     sockfd = socket(pr->sasend->sa_family, SOCK_RAW, pr->icmpproto);
     setuid(getuid());		/* don't need special permissions any more */
 
@@ -234,7 +239,8 @@ readloop(void)
 
     sig_alrm(SIGALRM);		/* send first packet */
 
-    for ( ; ; ) {
+    alive = 1;
+    for (int i = 0; i < 10; i++) {
         len = pr->salen;
         n = recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
         if (n < 0) {
@@ -243,6 +249,9 @@ readloop(void)
             else
                 err_sys("recvfrom error");
         }
+
+        if (!alive)
+            break;
 
         gettimeofday(&tval, NULL);
         (*pr->fproc)(recvbuf, n, &tval);
@@ -397,4 +406,11 @@ err_sys(const char *fmt, ...)
     err_doit(1, LOG_ERR, fmt, ap);
     va_end(ap);
     exit(1);
+}
+
+void
+handle_sigint()
+{
+    printf("\nSIGINT caught!\n");
+    alive = 0;
 }

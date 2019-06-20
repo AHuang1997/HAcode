@@ -40,8 +40,11 @@ char	*host;
 int	 nsent;			/* add 1 for each sendto() */
 pid_t pid;			/* our PID */
 int	 sockfd;
-int	 verbose;
 int    daemon_proc;            /* set nonzero by daemon_init() */
+
+// 命令行参数
+int	 verbose;
+int  q;
 
 /* function prototypes */
 void	 proc_v4(char *, ssize_t, struct timeval *);

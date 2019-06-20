@@ -8,8 +8,12 @@ struct proto	proto_v6 = { proc_v6, send_v6, NULL, NULL, 0, IPPROTO_ICMPV6 };
 
 int	datalen = 56;		/* data that goes with ICMP echo request */
 
-void handle_sigint();
-int alive;
+// yxy
+void print_stat(struct timeval start_time); // 打印汇总信息
+void handle_sigint(); // 处理中断
+int alive = 1; // 中断用
+int pkg_trans = 0; // 发送计数
+int pkg_recv = 0;  // 接收计数
 
 int
 main(int argc, char **argv)
@@ -33,8 +37,14 @@ main(int argc, char **argv)
         err_quit("usage: ping [ -v ] <hostname>");
     host = argv[optind];
 
+    // 记录程序开始的时间
+    struct timeval start_time;
+    gettimeofday(&start_time, NULL);
+
+    alive = 1;
+
     pid = getpid();
-    signal(SIGALRM, sig_alrm);
+    //signal(SIGALRM, sig_alrm);
 
     ai = host_serv(host, NULL, 0, 0);
 
@@ -60,6 +70,8 @@ main(int argc, char **argv)
 
     readloop();
 
+    print_stat(start_time);
+
     exit(0);
 }
 
@@ -76,8 +88,11 @@ proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv)
     hlen1 = ip->ip_hl << 2;		/* length of IP header */
 
     icmp = (struct icmp *) (ptr + hlen1);	/* start of ICMP header */
-    if ( (icmplen = len - hlen1) < 8)
-        err_quit("icmplen (%d) < 8", icmplen);
+
+    // 已设置超时，下面不需要
+    //if ( (icmplen = len - hlen1) < 8)
+    //    err_quit("icmplen (%d) < 8", icmplen);
+    icmplen = len - hlen1;
 
     if (icmp->icmp_type == ICMP_ECHOREPLY) {
         if (icmp->icmp_id != pid)
@@ -88,6 +103,7 @@ proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv)
         tvsend = (struct timeval *) icmp->icmp_data;
         tv_sub(tvrecv, tvsend);
         rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
+        pkg_recv++;
 
         printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n",
                icmplen, Sock_ntop_host(pr->sarecv, pr->salen),
@@ -197,6 +213,7 @@ send_v4(void)
     icmp->icmp_cksum = in_cksum((u_short *) icmp, len);
 
     sendto(sockfd, sendbuf, len, 0, pr->sasend, pr->salen);
+    pkg_trans++;
 }
 
 void
@@ -237,21 +254,26 @@ readloop(void)
     size = 60 * 1024;		/* OK if setsockopt fails */
     setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
 
-    sig_alrm(SIGALRM);		/* send first packet */
+    // 设置超时
+    struct timeval timeout={4,0};
+    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(struct timeval));
 
-    alive = 1;
+    //sig_alrm(SIGALRM);		/* send first packet */
+
+
     for (int i = 0; i < 10; i++) {
+        (*pr->fsend)();
+        sleep(1);
         len = pr->salen;
         n = recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
         if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            else
-                err_sys("recvfrom error");
+            printf("timeout\n");
         }
 
-        if (!alive)
+        if (!alive) {
+            pkg_trans--;
             break;
+        }
 
         gettimeofday(&tval, NULL);
         (*pr->fproc)(recvbuf, n, &tval);
@@ -406,6 +428,17 @@ err_sys(const char *fmt, ...)
     err_doit(1, LOG_ERR, fmt, ap);
     va_end(ap);
     exit(1);
+}
+
+void
+print_stat(struct timeval start_time)
+{
+    struct timeval end_time;
+    gettimeofday(&end_time, NULL);
+    tv_sub(&end_time, &start_time);
+    printf("\n--- %s ping statistics ---\n", host);
+    printf("%d packets transmitted, %d received, %.2lf%% packet loss, time %dms\n",
+            pkg_trans, pkg_recv, (pkg_trans - pkg_recv)*100.0/pkg_trans, (int)(end_time.tv_sec*1000+end_time.tv_usec/1000));
 }
 
 void

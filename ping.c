@@ -22,10 +22,13 @@ main(int argc, char **argv)
     struct addrinfo	*ai;
 
     opterr = 0;		/* don't want getopt() writing to stderr */
-    while ( (c = getopt(argc, argv, "v")) != -1) {
+    while ( (c = getopt(argc, argv, "vq")) != -1) {
         switch (c) {
             case 'v':
                 verbose++;
+                break;
+            case 'q':
+                q = 1;
                 break;
 
             case '?':
@@ -48,8 +51,11 @@ main(int argc, char **argv)
 
     ai = host_serv(host, NULL, 0, 0);
 
-    printf("ping %s (%s): %d data bytes\n", ai->ai_canonname,
-           Sock_ntop_host(ai->ai_addr, ai->ai_addrlen), datalen);
+    if (!q)
+    {
+        printf("ping %s (%s): %d data bytes\n", ai->ai_canonname,
+               Sock_ntop_host(ai->ai_addr, ai->ai_addrlen), datalen);
+    }
 
     /* 4initialize according to protocol */
     if (ai->ai_family == AF_INET) {
@@ -105,14 +111,25 @@ proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv)
         rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
         pkg_recv++;
 
-        printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n",
-               icmplen, Sock_ntop_host(pr->sarecv, pr->salen),
-               icmp->icmp_seq, ip->ip_ttl, rtt);
+        if (q)
+        {
+            ;
+        }
+        else if (verbose)
+        {
+            printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms",
+                   icmplen, Sock_ntop_host(pr->sarecv, pr->salen),
+                   icmp->icmp_seq, ip->ip_ttl, rtt);
+            printf("  %d bytes from %s: type = %d, code = %d\n",
+                   icmplen, Sock_ntop_host(pr->sarecv, pr->salen),
+                   icmp->icmp_type, icmp->icmp_code);
+        } else {
+            printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n",
+                   icmplen, Sock_ntop_host(pr->sarecv, pr->salen),
+                   icmp->icmp_seq, ip->ip_ttl, rtt);
+        }
 
-    } else if (verbose) {
-        printf("  %d bytes from %s: type = %d, code = %d\n",
-               icmplen, Sock_ntop_host(pr->sarecv, pr->salen),
-               icmp->icmp_type, icmp->icmp_code);
+
     }
 }
 

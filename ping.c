@@ -1,5 +1,5 @@
 #include "ping.h"
-
+#include <error.h>
 struct proto	proto_v4 = { proc_v4, send_v4, NULL, NULL, 0, IPPROTO_ICMP };
 
 #ifdef	IPV6
@@ -14,6 +14,11 @@ void handle_sigint(); // 处理中断
 int alive = 1; // 中断用
 int pkg_trans = 0; // 发送计数
 int pkg_recv = 0;  // 接收计数
+int broadcast_flag = 0; //flag for enabling broadcast address
+int debug_flag = 0;  //flag for enabling debug mode
+int ignore_rt_flag = 0; //flag for ignoring routing table
+int trace_route_flag = 0; //flag for route tracing
+int ttl = 255;  //default ttl value
 
 int
 main(int argc, char **argv)
@@ -22,12 +27,23 @@ main(int argc, char **argv)
     struct addrinfo	*ai;
 
     opterr = 0;		/* don't want getopt() writing to stderr */
-    while ( (c = getopt(argc, argv, "v")) != -1) {
+    while ( (c = getopt(argc, argv, "vdbrR")) != -1) {
         switch (c) {
             case 'v':
                 verbose++;
                 break;
-
+            case 'd':
+                debug_flag++;
+                break;
+            case 'b':
+                broadcast_flag++;
+                break;
+            case 'r':
+                ignore_rt_flag++;
+                break;
+            case 'R':
+                trace_route_flag++;
+                break;
             case '?':
                 err_quit("unrecognized option: %c", c);
         }
@@ -113,6 +129,28 @@ proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv)
         printf("  %d bytes from %s: type = %d, code = %d\n",
                icmplen, Sock_ntop_host(pr->sarecv, pr->salen),
                icmp->icmp_type, icmp->icmp_code);
+    } else if(trace_route_flag == 1 && icmp->icmp_type == ICMP_TIME_EXCEEDED && icmp->icmp_code == ICMP_TIMXCEED_INTRANS) {
+//        if (icmp->icmp_id != pid)
+//            return;			/* not a response to our ECHO_REQUEST */
+//        if (icmplen < 16)
+//            err_quit("icmplen (%d) < 16", icmplen);
+
+        tvsend = (struct timeval *) icmp->icmp_data;
+        tv_sub(tvrecv, tvsend);
+        rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
+        printf("%d bytes from %d hop %s: seq=%u, ttl=%d, rtt=%.3f ms\n",
+                   icmplen, ttl, Sock_ntop_host(pr->sarecv, pr->salen),
+                   icmp->icmp_seq, ip->ip_ttl, rtt);
+    } else if(trace_route_flag == 1 && icmp->icmp_type == ICMP_ECHOREPLY) {
+        tvsend = (struct timeval *) icmp->icmp_data;
+        tv_sub(tvrecv, tvsend);
+        rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
+        pkg_recv++;
+
+        printf("%d bytes from %s: seq=%u, ttl=%d, rtt=%.3f ms\n",
+               icmplen, Sock_ntop_host(pr->sarecv, pr->salen),
+               icmp->icmp_seq, ip->ip_ttl, rtt);
+        return;
     }
 }
 
@@ -200,7 +238,14 @@ send_v4(void)
 {
     int			len;
     struct icmp	*icmp;
-
+    if(trace_route_flag){
+        struct timeval time_out;
+        time_out.tv_sec=1;
+        time_out.tv_usec=0;
+        ttl++;
+        setsockopt(sockfd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (char*)&time_out, sizeof(struct timeval));
+    }
     icmp = (struct icmp *) sendbuf;
     icmp->icmp_type = ICMP_ECHO;
     icmp->icmp_code = 0;
@@ -245,29 +290,42 @@ readloop(void)
     socklen_t		len;
     ssize_t			n;
     struct timeval	tval;
-
     signal(SIGINT, handle_sigint);
 
     sockfd = socket(pr->sasend->sa_family, SOCK_RAW, pr->icmpproto);
+    if(sockfd == -1)
+        printf("error number: %d\n", errno);
     setuid(getuid());		/* don't need special permissions any more */
 
     size = 60 * 1024;		/* OK if setsockopt fails */
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+    if(debug_flag == 1)
+        setsockopt(sockfd, SOL_SOCKET, SO_DEBUG, &size, sizeof(size));
+    else if(broadcast_flag == 1)
+        setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &size, sizeof(size));
+    else if(ignore_rt_flag == 1)
+        setsockopt(sockfd, SOL_SOCKET, SO_DONTROUTE, &size, sizeof(size));
+    else if(trace_route_flag == 1)
+        ttl = 0;
+        //this option will be handled in send_v4
 
     // 设置超时
-    struct timeval timeout={4,0};
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(struct timeval));
+//    struct timeval timeout={4,0};
+//    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(struct timeval));
 
     //sig_alrm(SIGALRM);		/* send first packet */
 
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 100; i++) {
         (*pr->fsend)();
-        sleep(1);
+        if(!trace_route_flag)
+            sleep(1);
         len = pr->salen;
         n = recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
         if (n < 0) {
-            printf("timeout\n");
+            if(trace_route_flag == 1)
+                printf("timeout for hop %d\n", ttl);
+            else
+                printf("timeout\n");
         }
 
         if (!alive) {
@@ -276,7 +334,8 @@ readloop(void)
         }
 
         gettimeofday(&tval, NULL);
-        (*pr->fproc)(recvbuf, n, &tval);
+        if(n >= 0)
+            (*pr->fproc)(recvbuf, n, &tval);
     }
 }
 

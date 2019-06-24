@@ -45,6 +45,7 @@ int    daemon_proc;            /* set nonzero by daemon_init() */
 // 命令行参数
 int	 verbose;
 int  q;
+int  l;
 
 /* function prototypes */
 void	 proc_v4(char *, ssize_t, struct timeval *);

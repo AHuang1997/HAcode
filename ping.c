@@ -22,13 +22,16 @@ main(int argc, char **argv)
     struct addrinfo	*ai;
 
     opterr = 0;		/* don't want getopt() writing to stderr */
-    while ( (c = getopt(argc, argv, "vq")) != -1) {
+    while ( (c = getopt(argc, argv, "vql")) != -1) {
         switch (c) {
             case 'v':
                 verbose++;
                 break;
             case 'q':
                 q = 1;
+                break;
+            case 'l':
+                l = 1;
                 break;
 
             case '?':
@@ -277,6 +280,17 @@ readloop(void)
 
     //sig_alrm(SIGALRM);		/* send first packet */
 
+    // 发送前置包
+    if (l)
+    {
+        printf("\nSending Preload...\n");
+        for (int i = 0; i < 3; i++)
+        {
+            (*pr->fsend)();
+            pkg_trans--;
+        }
+        printf("Preload sent.\n");
+    }
 
     for (int i = 0; i < 10; i++) {
         (*pr->fsend)();

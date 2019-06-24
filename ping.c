@@ -11,6 +11,7 @@ int	datalen = 56;		/* data that goes with ICMP echo request */
 // yxy
 void print_stat(struct timeval start_time); // 打印汇总信息
 void handle_sigint(); // 处理中断
+void send_preload();
 int alive = 1; // 中断用
 int pkg_trans = 0; // 发送计数
 int pkg_recv = 0;  // 接收计数
@@ -110,6 +111,7 @@ proc_v4(char *ptr, ssize_t len, struct timeval *tvrecv)
             err_quit("icmplen (%d) < 16", icmplen);
 
         tvsend = (struct timeval *) icmp->icmp_data;
+        //tvrecv->tv_sec -= 1;
         tv_sub(tvrecv, tvsend);
         rtt = tvrecv->tv_sec * 1000.0 + tvrecv->tv_usec / 1000.0;
         pkg_recv++;
@@ -283,18 +285,19 @@ readloop(void)
     // 发送前置包
     if (l)
     {
-        printf("\nSending Preload...\n");
+        printf("\nSending 3 preload packages...\n");
         for (int i = 0; i < 3; i++)
         {
-            (*pr->fsend)();
+            send_preload();
             pkg_trans--;
         }
+        nsent = 0;
         printf("Preload sent.\n");
     }
 
     for (int i = 0; i < 10; i++) {
-        (*pr->fsend)();
         sleep(1);
+        (*pr->fsend)();
         len = pr->salen;
         n = recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
         if (n < 0) {
@@ -329,9 +332,6 @@ tv_sub(struct timeval *out, struct timeval *in)
     }
     out->tv_sec -= in->tv_sec;
 }
-
-
-
 
 char *
 sock_ntop_host(const struct sockaddr *sa, socklen_t salen)
@@ -377,6 +377,9 @@ sock_ntop_host(const struct sockaddr *sa, socklen_t salen)
     return (NULL);
 }
 
+
+
+
 char *
 Sock_ntop_host(const struct sockaddr *sa, socklen_t salen)
 {
@@ -403,6 +406,7 @@ host_serv(const char *host, const char *serv, int family, int socktype)
 
     return(res);    /* return pointer to first on linked list */
 }
+
 /* end host_serv */
 
 static void
@@ -431,8 +435,6 @@ err_doit(int errnoflag, int level, const char *fmt, va_list ap)
     }
     return;
 }
-
-
 /* Fatal error unrelated to a system call.
  * Print a message and terminate. */
 
@@ -445,6 +447,14 @@ err_quit(const char *fmt, ...)
     err_doit(0, LOG_ERR, fmt, ap);
     va_end(ap);
     exit(1);
+}
+
+
+void send_preload()
+{
+    (*pr->fsend)();
+    socklen_t len = pr->salen;
+    recvfrom(sockfd, recvbuf, sizeof(recvbuf), 0, pr->sarecv, &len);
 }
 
 /* Fatal error related to a system call.
